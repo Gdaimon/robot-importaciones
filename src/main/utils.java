@@ -1,3 +1,5 @@
+package main;
+
 import org.apache.http.Consts;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
@@ -8,6 +10,7 @@ import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.entity.UrlEncodedFormEntity;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.params.CookiePolicy;
+import org.apache.http.client.utils.URLEncodedUtils;
 import org.apache.http.conn.ClientConnectionManager;
 import org.apache.http.conn.scheme.Scheme;
 import org.apache.http.conn.scheme.SchemeRegistry;
@@ -26,10 +29,14 @@ import org.slf4j.LoggerFactory;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
 
 class Utils {
 	private static final Logger logger = LoggerFactory.getLogger ( Utils.class );
@@ -154,7 +161,7 @@ class Utils {
 		HttpEntity entity;
 		HttpPost httpPost;
 		String mensaje;
-		Integer bada_id_docum = 0;
+		int bada_id_docum = 0;
 		String URL = "https://importaciones.dian.gov.co/SIGLOXXI/IMPORTACIONES/m_levante/m_declaracion_importacion/asp/le_02pre_buzon_deim_gen.asp";
 		
 		try {
@@ -162,9 +169,7 @@ class Utils {
 				// Path consultar y actualizar bada_id_docum
 				httpPost = new HttpPost ( URL );
 				parametros.add ( new BasicNameValuePair ( "accionX", "IMPR_DECLA" ) );
-//				parametros.add( new BasicNameValuePair( "accionX", "IMPR_ITEMS" ) );
 				parametros.add ( new BasicNameValuePair ( "numero_interno", numeroAceptacion ) );
-//				parametros.add( new BasicNameValuePair( "numero_item", "1" ) );
 				parametros.add ( new BasicNameValuePair ( "submit", "CONFIRMAR" ) );
 				
 				httpPost.setEntity ( new UrlEncodedFormEntity ( parametros, Consts.UTF_8 ) );
@@ -176,11 +181,11 @@ class Utils {
 				mensaje = "No se pudo establecer conexion con la DIAN, por favor intente nuevamente";
 				System.out.println ( mensaje );
 			}
-			return bada_id_docum.toString ( );
+			return Integer.toString ( bada_id_docum );
 		} catch ( Exception e ) {
 			e.printStackTrace ( );
 		}
-		return bada_id_docum.toString ( );
+		return Integer.toString ( bada_id_docum );
 	}
 	
 	/**
@@ -191,16 +196,15 @@ class Utils {
 	public static Integer obtenerBadaIdDocum ( String html ) {
 		Document document = Jsoup.parse ( html );
 		Elements inputs = document.select ( "input[name=bada_id_docum]" );
-		int bada_id_docum = 0;
+		String url = document.select ( "font.Arial05 a[href*=mercancia]" ).attr ( "href" );
 		
-		for ( Element input : inputs ) {
-			
-			String anchorText = input.attr ( "value" );
-			if ( anchorText.length ( ) > 0 ) {
-				bada_id_docum = Integer.parseInt ( anchorText );
-			}
-			
-		}
+		URI uri = URI.create ( url );
+		Map < String, String > parametros = URLEncodedUtils.parse ( uri, "UTF-8" )
+						                                    .stream ( )
+						                                    .collect (
+										                                    Collectors.toMap ( NameValuePair::getName, NameValuePair::getValue )
+						                                    );
+		int bada_id_docum = Integer.parseInt ( parametros.get ( "bada_id_docum" ) );
 		return Math.max ( bada_id_docum, 0 );
 	}
 	
@@ -209,7 +213,7 @@ class Utils {
 	 * @author Carlos Andres Charris S
 	 * @since 7/05/2021
 	 */
-	public static HttpClient iniciarConexionDian ( String regional ) {
+	static HttpClient iniciarConexionDian ( String regional ) {
 		HttpClient httpClient = wrapperClientSSL ( new DefaultHttpClient ( ) );
 		HttpPost httpPost = null;
 		List < NameValuePair > parametros = new ArrayList <> ( );
@@ -218,8 +222,9 @@ class Utils {
 		final String URL_PRINCIPAL = "https://importaciones.dian.gov.co/sigloxxi/comun/asp/COMEX.asp";
 		final String URL_LOGIN = "https://importaciones.dian.gov.co/SIGLOXXI/comun/cm_receptor.asp";
 		final String URL_MENU_PRINCIPAL = "https://importaciones.dian.gov.co/SIGLOXXI/comun/menu/menuJava.asp";
-		String usuario = "i0161170";
-		String password = "aviatur";
+		Map < String, String > credenciales = obtenerCredencialesAcceso ( );
+		String usuario = credenciales.get ( "user" );
+		String password = credenciales.get ( "pass" );
 		String mensaje;
 		
 		try {
@@ -438,6 +443,72 @@ class Utils {
 						       .custom ( )
 						       .setCookieSpec ( CookieSpecs.STANDARD )
 						       .build ( );
+	}
+	
+	static void generarNumeroSticker ( HttpClient httpClient, String numeroAceptacion, String badaIdDocum ) {
+		List < NameValuePair > parametros = new ArrayList <> ( );
+		HttpResponse response;
+		HttpPost httpPost;
+		HttpEntity entity;
+		String mensaje;
+		
+		String fechaAcepta = "";
+		// Antigua URL
+		// String URL = "https://importaciones.dian.gov.co/SIGLOXXI/IMPORTACIONES/m_levante/m_documentos_soporte/asp/le_02pre_deim_ceros.asp?bada_id_docum=" + badaIdDocument + "&n_acepta=" + numeroAcepta + "&f_acepta=" + fechaAcepta;
+		String URL = "https://importaciones.dian.gov.co/SIGLOXXI/IMPORTACIONES/m_levante/m_documentos_soporte/asp/le_02pre_deim_ceros.asp";
+		try {
+			// Seteamos la ruta que vamos a consultar
+			httpPost = new HttpPost ( URL );
+			// Adicinamos los parametros de la consulta
+			parametros.add ( new BasicNameValuePair ( "bada_id_docum", badaIdDocum ) );
+			parametros.add ( new BasicNameValuePair ( "n_acepta", numeroAceptacion ) );
+			parametros.add ( new BasicNameValuePair ( "f_acepta", fechaAcepta ) );
+			
+			httpPost.setEntity ( new UrlEncodedFormEntity ( parametros, Consts.UTF_8 ) );
+			response = consultarPaginaPost ( httpClient, httpPost );
+			
+			entity = response.getEntity ( );
+			// Consumo de la respuesta de la pagina
+			mensaje = EntityUtils.toString ( entity );
+			
+			Document document = Jsoup.parse ( mensaje );
+			
+			String noSticker = document.select ( "table[border=0] tr > td:contains(Auto-Adhesivo) > font > b" )
+							                   .first ( )
+							                   .parent ( )
+							                   .parent ( )
+							                   .parent ( )
+							                   .select ( "td[align=left] > font > b" )
+							                   .text ( );
+			
+			System.out.println ( "---------------- Datos declaracion ----------------" );
+			System.out.println ( "Declaracion No. : " + numeroAceptacion );
+			System.out.println ( "Sticker No. : " + noSticker );
+			System.out.println ( "------------------------   ------------------------" );
+			
+		} catch ( Exception e ) {
+			e.printStackTrace ( );
+		}
+	}
+	
+	static Map < String, String > obtenerCredencialesAcceso ( ) {
+		try ( InputStream inputStream = new FileInputStream ( "src/main/resources/config.properties" ) ) {
+			
+			if ( inputStream == null ) {
+				System.out.println ( "No se encontro el archivo config.properties" );
+				return new HashMap <> ( );
+			}
+			Properties properties = new Properties ( );
+			// cargamos los valores del inputStream al objero properties
+			properties.load ( inputStream );
+			Map < String, String > credenciales = new HashMap <> ( );
+			credenciales.put ( "user", properties.getProperty ( "user" ) );
+			credenciales.put ( "pass", properties.getProperty ( "pass" ) );
+			return credenciales;
+		} catch ( IOException ex ) {
+			ex.printStackTrace ( );
+			return new HashMap <> ( );
+		}
 	}
 	
 }
