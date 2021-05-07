@@ -1,5 +1,11 @@
 package main;
 
+import com.itextpdf.html2pdf.ConverterProperties;
+import com.itextpdf.html2pdf.HtmlConverter;
+import com.itextpdf.kernel.pdf.PdfDocument;
+import com.itextpdf.kernel.pdf.PdfReader;
+import com.itextpdf.kernel.pdf.PdfWriter;
+import com.itextpdf.kernel.utils.PdfMerger;
 import org.apache.http.Consts;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
@@ -29,12 +35,16 @@ import org.slf4j.LoggerFactory;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -508,6 +518,79 @@ class Utils {
 		} catch ( IOException ex ) {
 			ex.printStackTrace ( );
 			return new HashMap <> ( );
+		}
+	}
+	
+	public static void generarReciboOficialPago ( HttpClient httpClient, String fechaAceptacion, String badaIdDocum, String numeroAceptacion ) {
+		List < NameValuePair > parametros = new ArrayList < NameValuePair > ( );
+		HttpResponse response = null;
+		HttpPost httpPost = null;
+		HttpEntity entity = null;
+		String mensaje = "";
+		String fechaDeclaracion = LocalDate.parse ( fechaAceptacion, DateTimeFormatter.ofPattern ( "d/MM/yyyy" ) ).format ( DateTimeFormatter.ofPattern ( "yyyy-MM-d" ) );
+		String URL = "https://importaciones.dian.gov.co/SIGLOXXI/IMPORTACIONES/m_levante/m_documentos_soporte/asp/pago_electronico.asp";
+		
+		try {
+			// Seteamos la ruta que vamos a consultar
+			httpPost = new HttpPost ( URL );
+			// Adicinamos los parametros de la consulta
+			
+			parametros = new ArrayList < NameValuePair > ( ); //"2019-05-16";
+			parametros.add ( new BasicNameValuePair ( "fecha_entrega", fechaDeclaracion ) );
+			parametros.add ( new BasicNameValuePair ( "bada_id_docum", badaIdDocum ) );
+			parametros.add ( new BasicNameValuePair ( "submit", "INGRESAR" ) );
+			// Adicionamos los parametros a la consulta y como es peticion POST se deben codificar los parametros de la consulta
+			httpPost.setEntity ( new UrlEncodedFormEntity ( parametros, Consts.UTF_8 ) );
+			
+			response = consultarPaginaPost ( httpClient, httpPost );
+			entity = response.getEntity ( );
+			// Consumo de la respuesta de la pagina
+			mensaje = EntityUtils.toString ( entity );
+			System.out.println ( mensaje );
+			
+			// Crear la ruta donde guardaremos los archivos
+			String rutaDirectorio = rutaCarpetaRecibos ( );
+			Path path = Paths.get ( rutaDirectorio + numeroAceptacion + ".html" );
+			Files.write ( path, mensaje.getBytes ( ) );
+			
+			PdfWriter writer = new PdfWriter ( rutaDirectorio + numeroAceptacion + ".pdf" );
+			PdfDocument pdf = new PdfDocument ( writer );
+			PdfMerger merger = new PdfMerger ( pdf );
+			ConverterProperties properties = new ConverterProperties ( );
+			
+			String urlImagen = "https://importaciones.dian.gov.co/SIGLOXXI/IMPORTACIONES/imagenes/logo-dian.jpg";
+			Document documentHtml = Jsoup.parse ( mensaje );
+			Element imagen = documentHtml.selectFirst ( "img" );
+			imagen.attr ( "src", urlImagen );
+			
+			ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream ( );
+			PdfDocument paginaTemporalPdf = new PdfDocument ( new PdfWriter ( byteArrayOutputStream ) );
+			HtmlConverter.convertToPdf ( new ByteArrayInputStream ( mensaje.getBytes ( StandardCharsets.UTF_8 ) ), paginaTemporalPdf, properties );
+			paginaTemporalPdf = new PdfDocument ( new PdfReader ( new ByteArrayInputStream ( byteArrayOutputStream.toByteArray ( ) ) ) );
+			merger.merge ( paginaTemporalPdf, 1, paginaTemporalPdf.getNumberOfPages ( ) );
+			paginaTemporalPdf.close ( );
+			pdf.close ( );
+			
+			
+		} catch ( Exception e ) {
+			e.printStackTrace ( );
+		}
+	}
+	
+	static String rutaCarpetaRecibos ( ) {
+		try {
+			Path path = Paths.get ( System.getProperty ( "user.home" ) + "\\Desktop\\recibos" );
+			File directory = new File ( path.toString ( ) );
+			
+			if ( !directory.exists ( ) ) {
+				Files.createDirectories ( path );
+			}
+			System.out.println ( "Se guardo el archivo en la ruta:" );
+			System.out.println ( path );
+			return path.toString ( );
+		} catch ( Exception e ) {
+			e.printStackTrace ( );
+			return "";
 		}
 	}
 	
