@@ -1,9 +1,43 @@
-public class utils {
+import org.apache.http.Consts;
+import org.apache.http.HttpEntity;
+import org.apache.http.HttpResponse;
+import org.apache.http.NameValuePair;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.config.CookieSpecs;
+import org.apache.http.client.config.RequestConfig;
+import org.apache.http.client.entity.UrlEncodedFormEntity;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.params.CookiePolicy;
+import org.apache.http.conn.ClientConnectionManager;
+import org.apache.http.conn.scheme.Scheme;
+import org.apache.http.conn.scheme.SchemeRegistry;
+import org.apache.http.conn.ssl.SSLSocketFactory;
+import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.impl.client.LaxRedirectStrategy;
+import org.apache.http.message.BasicNameValuePair;
+import org.apache.http.util.EntityUtils;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import org.jsoup.select.Elements;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.List;
+
+class Utils {
+	private static final Logger logger = LoggerFactory.getLogger ( Utils.class );
 	
 	/**
 	 * Metodo para realizar la consulta del id de la regional por donde se va a presnetar la declaracion de importacion
-	 * @param aceptacion
-	 * @return
+	 * @author Carlos Andres Charris S
+	 * @since 7/05/2021
 	 */
 	public static String obtenerAdministracion ( String aceptacion ) {
 		String idRegional = aceptacion.substring ( 0, 2 );
@@ -63,4 +97,347 @@ public class utils {
 		}
 		return regional;
 	}
+	
+	/**
+	 * Metodo para realizar la consulta a la pagina suministrada
+	 * @author Carlos Andres Charris S
+	 * @since 7/05/2021
+	 */
+	public static HttpResponse consultarPaginaPost ( HttpClient httpClient, HttpPost httpPost ) {
+		int numero = 10;
+		int noIntentos = 0;
+		HttpResponse response = null;
+		while ( numero > 0 ) {
+			try {
+				response = httpClient.execute ( httpPost );
+			} catch ( Exception e ) {
+				numero--;
+				noIntentos++;
+				logger.info ( "Intentando consultar pagina, intento No.: " + noIntentos + " de 10" );
+			}
+			
+			if ( response != null ) {
+				if ( validarCodigoRespuesta ( response.getStatusLine ( ).getStatusCode ( ) ) ) {
+					return response;
+				} else {
+					numero--;
+					noIntentos++;
+					logger.info ( "Intentando consultar pagina, intento No.: " + noIntentos + " de 10" );
+				}
+			} else {
+				numero--;
+				noIntentos++;
+				logger.info ( "Intentando consultar pagina, intento No.: " + noIntentos + " de 10" );
+			}
+			
+		}
+		return response;
+	}
+	
+	/**
+	 * Valida el codigo de respuesta de la pagina
+	 * @author Carlos Andres Charris S
+	 * @since 7/05/2021
+	 */
+	static boolean validarCodigoRespuesta ( int codigoRespuesta ) {
+		return codigoRespuesta == 200;
+	}
+	
+	/**
+	 * Metodo para consultar la declaracion de importacion y consultar su bada_id_docum
+	 * @author Carlos Andres Charris S
+	 * @since 7/05/2021
+	 */
+	public static String buscarBadaIdDocum ( HttpClient httpClient, String numeroAceptacion ) {
+		List < NameValuePair > parametros = new ArrayList <> ( );
+		HttpResponse response;
+		HttpEntity entity;
+		HttpPost httpPost;
+		String mensaje;
+		Integer bada_id_docum = 0;
+		String URL = "https://importaciones.dian.gov.co/SIGLOXXI/IMPORTACIONES/m_levante/m_declaracion_importacion/asp/le_02pre_buzon_deim_gen.asp";
+		
+		try {
+			if ( httpClient != null ) {
+				// Path consultar y actualizar bada_id_docum
+				httpPost = new HttpPost ( URL );
+				parametros.add ( new BasicNameValuePair ( "accionX", "IMPR_DECLA" ) );
+//				parametros.add( new BasicNameValuePair( "accionX", "IMPR_ITEMS" ) );
+				parametros.add ( new BasicNameValuePair ( "numero_interno", numeroAceptacion ) );
+//				parametros.add( new BasicNameValuePair( "numero_item", "1" ) );
+				parametros.add ( new BasicNameValuePair ( "submit", "CONFIRMAR" ) );
+				
+				httpPost.setEntity ( new UrlEncodedFormEntity ( parametros, Consts.UTF_8 ) );
+				response = consultarPaginaPost ( httpClient, httpPost );
+				entity = response.getEntity ( );
+				mensaje = EntityUtils.toString ( entity );
+				bada_id_docum = obtenerBadaIdDocum ( mensaje );
+			} else {
+				mensaje = "No se pudo establecer conexion con la DIAN, por favor intente nuevamente";
+				System.out.println ( mensaje );
+			}
+			return bada_id_docum.toString ( );
+		} catch ( Exception e ) {
+			e.printStackTrace ( );
+		}
+		return bada_id_docum.toString ( );
+	}
+	
+	/**
+	 * Metodo para obtener del html el bada_id_docum
+	 * @author Carlos Andres Charris S
+	 * @since 7/05/2021
+	 */
+	public static Integer obtenerBadaIdDocum ( String html ) {
+		Document document = Jsoup.parse ( html );
+		Elements inputs = document.select ( "input[name=bada_id_docum]" );
+		int bada_id_docum = 0;
+		
+		for ( Element input : inputs ) {
+			
+			String anchorText = input.attr ( "value" );
+			if ( anchorText.length ( ) > 0 ) {
+				bada_id_docum = Integer.parseInt ( anchorText );
+			}
+			
+		}
+		return Math.max ( bada_id_docum, 0 );
+	}
+	
+	/**
+	 * Metodo que realiza la conexion con la DIAN y retorna una session activa de la conexion
+	 * @author Carlos Andres Charris S
+	 * @since 7/05/2021
+	 */
+	public static HttpClient iniciarConexionDian ( String regional ) {
+		HttpClient httpClient = wrapperClientSSL ( new DefaultHttpClient ( ) );
+		HttpPost httpPost = null;
+		List < NameValuePair > parametros = new ArrayList <> ( );
+		HttpResponse response;
+		HttpEntity entity;
+		final String URL_PRINCIPAL = "https://importaciones.dian.gov.co/sigloxxi/comun/asp/COMEX.asp";
+		final String URL_LOGIN = "https://importaciones.dian.gov.co/SIGLOXXI/comun/cm_receptor.asp";
+		final String URL_MENU_PRINCIPAL = "https://importaciones.dian.gov.co/SIGLOXXI/comun/menu/menuJava.asp";
+		String usuario = "i0161170";
+		String password = "aviatur";
+		String mensaje;
+		
+		try {
+			
+			// Seteamos la ruta que vamos a consultar
+			httpClient.getParams ( ).setParameter ( "http.protocol.cookie-policy", CookiePolicy.BROWSER_COMPATIBILITY );
+			final RequestConfig params = configuracionCookieRequest ( );
+			
+			httpPost = new HttpPost ( URL_PRINCIPAL );
+			httpPost.setConfig ( params );
+			// Parametros de ingreso pagina principal
+			parametros.add ( new BasicNameValuePair ( "admon", codigoAdministracion ( regional ) ) );
+			parametros.add ( new BasicNameValuePair ( "apli", "COMEX" ) );
+			parametros.add ( new BasicNameValuePair ( "modulo", "IMPORTACIONES" ) );
+			parametros.add ( new BasicNameValuePair ( "Entrada", "TRUE" ) );
+			parametros.add ( new BasicNameValuePair ( "submit1", "Cargar Modulo" ) );
+			// Adicionamos los parametros a la consulta y como es peticion POST se deben codificar los parametros de la consulta
+			httpPost.setEntity ( new UrlEncodedFormEntity ( parametros, Consts.UTF_8 ) );
+			response = consultarPaginaPost ( httpClient, httpPost );
+			entity = response.getEntity ( );
+			
+			mensaje = EntityUtils.toString ( entity );
+			EntityUtils.consume ( entity );
+			
+			// Verificamos la respueta de la pagina de la DIAN
+			if ( response.getStatusLine ( ).getStatusCode ( ) == 200 ) {
+				// Path pagina Login
+				httpPost = new HttpPost ( URL_LOGIN );
+				// Parametros de login usuario
+				parametros = new ArrayList <> ( );
+				parametros.add ( new BasicNameValuePair ( "id", usuario ) );
+				parametros.add ( new BasicNameValuePair ( "password", password ) );
+				httpPost.setEntity ( new UrlEncodedFormEntity ( parametros, Consts.UTF_8 ) );
+				response = consultarPaginaPost ( httpClient, httpPost );
+				entity = response.getEntity ( );
+				mensaje = EntityUtils.toString ( entity );
+				EntityUtils.consume ( entity );
+				
+				// Verificamos la respueta de la pagina de la DIAN
+				if ( response.getStatusLine ( ).getStatusCode ( ) == 200 ) {
+					mensaje = validarIngreso ( mensaje );
+					if ( mensaje.equals ( "" ) ) {
+						// Path menu principal con login
+						httpPost = new HttpPost ( URL_MENU_PRINCIPAL );
+						response = consultarPaginaPost ( httpClient, httpPost );
+						entity = response.getEntity ( );
+						EntityUtils.consume ( entity );
+						return httpClient;
+					} else {
+						logger.error ( "Error en el ingreso de la aplicacion" );
+						cerrarConexionDian ( httpClient, httpPost );
+					}
+				} else {
+					logger.error ( "Error en la respuesta del servidor de la DIAN, codigo de respuesta: " + response.getStatusLine ( ).getStatusCode ( ) );
+					cerrarConexionDian ( httpClient, httpPost );
+				}
+			} else {
+				logger.error ( "Error en la respuesta del servidor de la DIAN, codigo de respuesta: " + response.getStatusLine ( ).getStatusCode ( ) );
+				cerrarConexionDian ( httpClient, httpPost );
+			}
+		} catch ( Exception error ) {
+			cerrarConexionDian ( httpClient, httpPost );
+			error.printStackTrace ( );
+		}
+		return null;
+	}
+	
+	/**
+	 * Metodo encargado re realizar el cierre de la conexion de la pagina de la DIAN
+	 * @author Carlos Andres Charris S
+	 * @since 7/05/2021
+	 */
+	static void cerrarConexionDian ( HttpClient httpClient, HttpPost httpPost ) {
+		if ( httpPost != null ) {
+			httpPost.releaseConnection ( );
+		}
+		if ( httpClient != null ) {
+			httpClient.getConnectionManager ( ).shutdown ( );
+		}
+		
+	}
+	
+	/**
+	 * Emboltorio a la clase httpClient para hacer request SSL
+	 * @author Carlos Andres Charris S
+	 * @since 7/05/2021
+	 */
+	public static HttpClient wrapperClientSSL ( HttpClient httpClient ) {
+		try {
+			SSLContext sslContext = SSLContext.getInstance ( "TLS" );
+			X509TrustManager trustManager = new X509TrustManager ( ) {
+				public void checkClientTrusted ( X509Certificate[] xcs, String string ) throws CertificateException {
+				}
+				
+				public void checkServerTrusted ( X509Certificate[] xcs, String string ) throws CertificateException {
+				}
+				
+				public X509Certificate[] getAcceptedIssuers ( ) {
+					return null;
+				}
+			};
+			sslContext.init ( null, new TrustManager[] { trustManager }, null );
+			SSLSocketFactory sslSocketFactory = new SSLSocketFactory ( sslContext );
+			sslSocketFactory.setHostnameVerifier ( SSLSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER );
+			ClientConnectionManager clientConnectionManager = httpClient.getConnectionManager ( );
+			SchemeRegistry schemeRegistry = clientConnectionManager.getSchemeRegistry ( );
+			schemeRegistry.register ( new Scheme ( "https", sslSocketFactory, 443 ) );
+			
+			DefaultHttpClient client = new DefaultHttpClient ( clientConnectionManager, httpClient.getParams ( ) );
+			client.setRedirectStrategy ( new LaxRedirectStrategy ( ) );
+			return client;
+		} catch ( Exception ex ) {
+			return null;
+		}
+	}
+	
+	/**
+	 * Metodo para realizar la consulta del id de la regional por donde se va a presnetar la declaracion de importacion
+	 * @author Carlos Andres Charris S
+	 * @since 7/05/2021
+	 */
+	public static String codigoAdministracion ( String regional ) {
+		String idRegional = "";
+		switch ( regional ) {
+			case "Armenia":
+				idRegional = "01";
+				break;
+			case "Barranquilla":
+				idRegional = "87";
+				break;
+			case "Bogotá":
+				idRegional = "03";
+				break;
+			case "Bucaramanga":
+				idRegional = "04";
+				break;
+			case "Buenaventura":
+				idRegional = "35";
+				break;
+			case "Cali":
+				idRegional = "88";
+				break;
+			case "Cartagena":
+				idRegional = "48";
+				break;
+			case "Cúcuta":
+				idRegional = "89";
+				break;
+			case "Ipiales":
+				idRegional = "37";
+				break;
+			case "Maicao":
+				idRegional = "39";
+				break;
+			case "Manizales":
+				idRegional = "10";
+				break;
+			case "Medellín":
+				idRegional = "90";
+				break;
+			case "Pereira":
+				idRegional = "16";
+				break;
+			case "Puerto_Asis":
+				idRegional = "46";
+				break;
+			case "Riohacha":
+				idRegional = "25";
+				break;
+			case "Santa Marta":
+				idRegional = "19";
+				break;
+			case "Urabá":
+				idRegional = "41";
+				break;
+		}
+		return idRegional;
+	}
+	
+	/**
+	 * Metodo que verifica si el login se efectuo correctamente
+	 * @author Carlos Andres Charris S
+	 * @since 7/05/2021
+	 */
+	public static String validarIngreso ( String html ) {
+		
+		Document doc = Jsoup.parse ( html );
+		String mensaje = "";
+		Elements formas = doc.getElementsByTag ( "script" );
+		for ( Element inputElement : formas ) {
+			String key = inputElement.toString ( );
+			if ( key.length ( ) > 46 ) {
+				if ( ( key.substring ( 0, 30 ).compareTo ( "<script language=" + '"' + "JavaScript" + '"' + ">" ) == 0 ) && ( key.indexOf ( "mensaje_FALLO =" ) > 0 ) ) {
+					mensaje = key.replace ( "<script language=" + '"' + "JavaScript" + '"' + ">", "" );
+					mensaje = mensaje.replace ( "<!-- si no soporta JavaScript oculta el código -->", "" );
+					mensaje = mensaje.replace ( "mensaje_FALLO =", "" );
+					mensaje = mensaje.replace ( "alert(mensaje_FALLO);", "" );
+					mensaje = mensaje.replace ( "// End script hiding -->", "" );
+					mensaje = mensaje.replace ( "</script>", "" );
+					mensaje = mensaje.replace ( "\t", "" );
+					mensaje = mensaje.replace ( "\\n", " " );
+					mensaje = mensaje.replace ( "\\t", "" );
+				}
+			}
+		}
+		return mensaje;
+	}
+	
+	/**
+	 * Metodo para setear las cookies basicas del request
+	 * @author Carlos Andres Charris S
+	 * @since 7/05/2021
+	 */
+	public static RequestConfig configuracionCookieRequest ( ) {
+		return RequestConfig
+						       .custom ( )
+						       .setCookieSpec ( CookieSpecs.STANDARD )
+						       .build ( );
+	}
+	
 }
