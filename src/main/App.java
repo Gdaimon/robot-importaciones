@@ -22,7 +22,7 @@ public class App {
 		
 		
 		/* Sticker declaraciones de importacion */
-		// generarNumerosSticker ( numerosAceptacion );
+		//generarNumerosSticker ( numerosAceptacion );
 		
 		/* Recibos oficiales de pago */
 		// String fechaAceptacion = "07/04/2021";
