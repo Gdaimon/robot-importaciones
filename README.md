@@ -14,4 +14,3 @@
 * Github: [@Gdaimon](https://github.com/Gdaimon)
 * LinkedIn: [@carlos-charris](https://linkedin.com/in/carlos-charris)
 
-![stack](mern-stack.png)
